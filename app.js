@@ -506,7 +506,7 @@ async function handleOnboarding(phone, user, input, originalText) {
 
 // ================= ONBOARDING MENUS =================
 async function sendWelcome(phone) {
-  const msg = `🏋️ *Welcome to FitCoach AI!* 🏋️
+  const msg = `🏋️ *Welcome to Ultimate FitBuddy AI!* 🏋️
 
 Your personal AI-powered fitness & nutrition coach!
 
@@ -728,7 +728,7 @@ async function sendMainMenu(phone, name) {
   const msg = `${greeting}, ${name}! 👋
 ${subStatus}
 
-🏋️ *FitCoach Menu*
+🏋️ *Ultimate FitBuddy Menu*
 
 📋 *Plans*
 • today - Full plan (workout + diet)
@@ -1122,7 +1122,7 @@ async function initializeStripePrices() {
     const prices = await stripe.prices.list({ limit: 10, active: true });
     
     for (const price of prices.data) {
-      if (price.metadata?.app === 'fitcoach') {
+      if (price.metadata?.app === 'Ultimate FitBuddy') {
         if (price.recurring?.interval === 'week') {
           PRICE_IDS.weekly = price.id;
         } else if (price.recurring?.interval === 'month') {
@@ -1134,9 +1134,9 @@ async function initializeStripePrices() {
     // Create weekly price if not exists
     if (!PRICE_IDS.weekly) {
       const weeklyProduct = await stripe.products.create({
-        name: 'FitCoach AI - Weekly Plan',
+        name: 'Ultimate FitBuddy AI - Weekly Plan',
         description: '7 days unlimited access to personalized fitness plans',
-        metadata: { app: 'fitcoach' }
+        metadata: { app: 'Ultimate FitBuddy' }
       });
       
       const weeklyPrice = await stripe.prices.create({
@@ -1144,7 +1144,7 @@ async function initializeStripePrices() {
         unit_amount: SUBSCRIPTION_PLANS.weekly.price, // Already in paise
         currency: SUBSCRIPTION_PLANS.weekly.currency,
         recurring: { interval: 'week' },
-        metadata: { app: 'fitcoach' }
+        metadata: { app: 'Ultimate FitBuddy' }
       });
       
       PRICE_IDS.weekly = weeklyPrice.id;
@@ -1154,9 +1154,9 @@ async function initializeStripePrices() {
     // Create monthly price if not exists
     if (!PRICE_IDS.monthly) {
       const monthlyProduct = await stripe.products.create({
-        name: 'FitCoach AI - Monthly Plan',
+        name: 'Ultimate FitBuddy AI - Monthly Plan',
         description: '30 days unlimited access to personalized fitness plans',
-        metadata: { app: 'fitcoach' }
+        metadata: { app: 'Ultimate FitBuddy' }
       });
       
       const monthlyPrice = await stripe.prices.create({
@@ -1164,7 +1164,7 @@ async function initializeStripePrices() {
         unit_amount: SUBSCRIPTION_PLANS.monthly.price, // Already in paise
         currency: SUBSCRIPTION_PLANS.monthly.currency,
         recurring: { interval: 'month' },
-        metadata: { app: 'fitcoach' }
+        metadata: { app: 'Ultimate FitBuddy' }
       });
       
       PRICE_IDS.monthly = monthlyPrice.id;
@@ -1859,7 +1859,7 @@ setInterval(() => {
 
 // ================= START =================
 app.listen(PORT, async () => {
-  console.log(`🏋️ FitCoach AI running on port ${PORT}`);
+  console.log(`🏋️ Ultimate FitBuddy AI running on port ${PORT}`);
   console.log(`📱 Webhook ready at /`);
   console.log(`💳 Stripe webhook at /stripe-webhook`);
   console.log(`❤️ Health check at /health`);
