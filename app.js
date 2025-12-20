@@ -18,17 +18,15 @@ const WHATSAPP_API_URL = `https://graph.facebook.com/v23.0/${PHONE_NUMBER_ID}/me
 // ================= NLP MODEL =================
 let classifier;
 async function loadModel() {
-  if (!classifier) {
-    classifier = await pipeline(
-      'sentiment-analysis',
-      'Xenova/distilbert-base-uncased-finetuned-sst-2-english'
-    );
-    console.log('🤗 NLP model loaded');
-  }
+  classifier = await pipeline(
+    'sentiment-analysis',
+    'Xenova/distilbert-base-uncased-finetuned-sst-2-english'
+  );
+  console.log('🤗 NLP model loaded');
 }
 loadModel();
 
-// ================= IN-MEMORY USER STORE =================
+// ================= IN-MEMORY STORE =================
 const users = {};
 
 // ================= WEBHOOK VERIFY =================
@@ -44,43 +42,52 @@ app.get('/', (req, res) => {
 });
 
 // ================= WEBHOOK MESSAGE =================
-app.post('/', async (req, res) => {
+app.post('/', (req, res) => {
+  // ALWAYS ACK FIRST
+  res.status(200).end();
+
   const msg = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-  if (!msg) return res.status(200).end();
+  if (!msg || !msg.from) return;
 
   const phone = msg.from;
-  const text = msg.text?.body?.toLowerCase();
+  const text = msg.text?.body?.toLowerCase() || '';
 
-  if (!users[phone]) {
-    users[phone] = { state: 'ONBOARDING', profile: {} };
-    await sendText(phone, welcomeMessage());
-    return res.status(200).end();
-  }
-
-  const user = users[phone];
-
-  if (user.state === 'ONBOARDING') {
-    extractProfile(user.profile, text);
-
-    if (isProfileComplete(user.profile)) {
-      user.state = 'ACTIVE';
-      const plan = generatePlan(user.profile);
-      await sendText(phone, plan);
-    } else {
-      await sendText(phone, askMissing(user.profile));
-    }
-  } else {
-    await sendText(phone, '✅ Your plan is active. More features coming soon!');
-  }
-
-  res.status(200).end();
+  // Async processing (do NOT block webhook)
+  handleMessage(phone, text);
 });
+
+// ================= MESSAGE HANDLER =================
+async function handleMessage(phone, text) {
+  try {
+    if (!users[phone]) {
+      users[phone] = { state: 'ONBOARDING', profile: {} };
+      return sendText(phone, welcomeMessage());
+    }
+
+    const user = users[phone];
+
+    if (user.state === 'ONBOARDING') {
+      extractProfile(user.profile, text);
+
+      if (isProfileComplete(user.profile)) {
+        user.state = 'ACTIVE';
+        return sendText(phone, generatePlan(user.profile));
+      }
+
+      return sendText(phone, askMissing(user.profile));
+    }
+
+    return sendText(phone, '✅ Your plan is active. More features coming soon!');
+  } catch (err) {
+    console.error('❌ Handler error:', err.message);
+  }
+}
 
 // ================= NLP + EXTRACTION =================
 function extractProfile(profile, text) {
   const age = text.match(/(\d{2})\s*(years|yr|yo)?/);
-  const height = text.match(/(\d{3})\s*(cm)/);
-  const weight = text.match(/(\d{2})\s*(kg)/);
+  const height = text.match(/(\d{3})\s*cm/);
+  const weight = text.match(/(\d{2})\s*kg/);
 
   if (age) profile.age = Number(age[1]);
   if (height) profile.height = Number(height[1]);
@@ -89,11 +96,11 @@ function extractProfile(profile, text) {
   if (text.includes('muscle')) profile.goal = 'muscle gain';
   if (text.includes('fat')) profile.goal = 'fat loss';
 
-  if (text.includes('veg')) profile.diet = 'veg';
   if (text.includes('non')) profile.diet = 'non-veg';
+  else if (text.includes('veg')) profile.diet = 'veg';
 }
 
-// ================= PROFILE CHECK =================
+// ================= CHECKS =================
 function isProfileComplete(p) {
   return p.age && p.height && p.weight && p.goal && p.diet;
 }
@@ -106,7 +113,7 @@ function askMissing(p) {
   if (!p.diet) return 'Are you veg or non-veg?';
 }
 
-// ================= PLAN GENERATION (RULE BASED) =================
+// ================= PLAN =================
 function generatePlan(p) {
   return (
     `🎉 Profile complete!\n\n` +
@@ -115,35 +122,34 @@ function generatePlan(p) {
     `⚖️ Weight: ${p.weight} kg\n` +
     `🎯 Goal: ${p.goal}\n` +
     `🥗 Diet: ${p.diet}\n\n` +
-    `🏋️ Workout Plan:\n` +
-    `• Push-ups – 3x12\n` +
-    `• Squats – 3x15\n` +
-    `• Plank – 3x30 sec\n\n` +
-    `🥗 Diet Plan:\n` +
-    `• Breakfast: Oats + fruits\n` +
-    `• Lunch: Rice + dal + veggies\n` +
-    `• Dinner: Roti + protein\n\n` +
+    `🏋️ Workout:\n• Push-ups 3x12\n• Squats 3x15\n• Plank 3x30s\n\n` +
+    `🥗 Diet:\n• Breakfast: Oats\n• Lunch: Rice + dal\n• Dinner: Roti + protein\n\n` +
     `💪 Let’s begin!`
   );
 }
 
 // ================= WHATSAPP SEND =================
 function sendText(to, body) {
-  return axios.post(
-    WHATSAPP_API_URL,
-    {
-      messaging_product: 'whatsapp',
-      to,
-      type: 'text',
-      text: { body }
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
+  return axios
+    .post(
+      WHATSAPP_API_URL,
+      {
+        messaging_product: 'whatsapp',
+        to,
+        type: 'text',
+        text: { body }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
       }
-    }
-  );
+    )
+    .then(() => console.log('📤 Sent to', to))
+    .catch(err =>
+      console.error('❌ WhatsApp send failed:', err.response?.data || err.message)
+    );
 }
 
 // ================= WELCOME =================
@@ -151,8 +157,7 @@ function welcomeMessage() {
   return (
     '👋 Welcome to Ultimate FitBuddy AI!\n\n' +
     'Tell me about yourself in one message.\n\n' +
-    'Example:\n' +
-    '"I am 26 years old, 183 cm, 66 kg, want muscle gain, non veg"'
+    'Example:\n"I am 26 years old, 183 cm, 66 kg, want muscle gain, non veg"'
   );
 }
 
