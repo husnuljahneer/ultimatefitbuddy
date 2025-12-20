@@ -21,6 +21,7 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_51HEybmEtfPQmF2px');
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 const BASE_URL = process.env.BASE_URL || 'https://your-domain.com'; // Update this
+const APP_NAME = 'Ultimate FitBuddy';
 
 // Stripe Price IDs (create these in Stripe Dashboard)
 let PRICE_IDS = {
@@ -259,6 +260,11 @@ async function handleMessage(phone, text, interactiveId) {
   
   if (input === 'monthly' || input === 'subscribe_monthly') {
     return createCheckoutSession(phone, 'monthly');
+  }
+  
+  // Bypass for testing
+  if (input === 'bypass' || input === 'test' || input === 'bypass_test') {
+    return activateTestSubscription(phone);
   }
   
   if (['status', 'subscription', 'my plan'].includes(input)) {
@@ -506,7 +512,11 @@ async function handleOnboarding(phone, user, input, originalText) {
 
 // ================= ONBOARDING MENUS =================
 async function sendWelcome(phone) {
-  const msg = `🏋️ *Welcome to Ultimate FitBuddy AI!* 🏋️
+  // Send welcome image first
+  await sendWelcomeImage(phone);
+  await delay(1000);
+  
+  const msg = `💪 *Welcome to ${APP_NAME}!* 💪
 
 Your personal AI-powered fitness & nutrition coach!
 
@@ -521,6 +531,24 @@ Let's get started with a quick setup (~2 mins)
 
 *What's your name?*`;
   return sendText(phone, msg);
+}
+
+async function sendWelcomeImage(phone) {
+  try {
+    const prompt = `fitness app welcome banner, gym motivation, healthy lifestyle, workout equipment, colorful energetic design, professional fitness branding, modern app design, 4k quality`;
+    const encodedPrompt = encodeURIComponent(prompt);
+    const seed = Math.floor(Math.random() * 100000);
+    
+    const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=320&nologo=true&seed=${seed}`;
+    
+    // Pre-fetch to ensure image is ready
+    await axios.get(imageUrl, { timeout: 25000, responseType: 'arraybuffer' });
+    
+    await sendImage(phone, imageUrl, `🏋️ ${APP_NAME} - Your AI Fitness Coach`);
+  } catch (err) {
+    console.error('Welcome image error:', err.message);
+    // Continue without image
+  }
 }
 
 async function sendConditionsMenu(phone, selected) {
@@ -728,7 +756,7 @@ async function sendMainMenu(phone, name) {
   const msg = `${greeting}, ${name}! 👋
 ${subStatus}
 
-🏋️ *Ultimate FitBuddy Menu*
+🏋️ *${APP_NAME} Menu*
 
 📋 *Plans*
 • today - Full plan (workout + diet)
@@ -868,7 +896,7 @@ async function sendSubscriptionPlans(phone) {
   const sub = subscriptions[phone];
   const currentPlan = sub?.status === 'active' ? `\n\n✅ *Current Plan:* ${sub.plan.toUpperCase()} (expires ${new Date(sub.expiresAt).toLocaleDateString()})` : '';
   
-  const msg = `💎 *Subscription Plans*${currentPlan}
+  const msg = `💎 *${APP_NAME} - Subscription Plans*${currentPlan}
 
 📅 *WEEKLY PLAN*
 💰 ₹49/week
@@ -998,6 +1026,7 @@ ${session.url}
     
     return sendButtons(phone, 'After payment, type:', [
       { id: 'status', title: '✅ Check Status' },
+      { id: 'bypass_test', title: '🧪 Bypass (Testing)' },
       { id: 'menu', title: '📋 Menu' }
     ]);
     
@@ -1006,9 +1035,44 @@ ${session.url}
     await sendText(phone, '❌ Payment setup failed. Please try again or contact support.');
     return sendButtons(phone, 'Options:', [
       { id: 'subscribe', title: '🔄 Try Again' },
+      { id: 'bypass_test', title: '🧪 Bypass (Testing)' },
       { id: 'menu', title: '📋 Menu' }
     ]);
   }
+}
+
+// ================= TEST BYPASS =================
+async function activateTestSubscription(phone) {
+  const expiresAt = new Date();
+  expiresAt.setMonth(expiresAt.getMonth() + 1); // 1 month test access
+  
+  subscriptions[phone] = {
+    status: 'active',
+    plan: 'test_monthly',
+    expiresAt: expiresAt.toISOString(),
+    stripeCustomerId: 'test_customer',
+    stripeSubscriptionId: 'test_subscription',
+    createdAt: new Date().toISOString(),
+    isTest: true
+  };
+  
+  const msg = `🧪 *TEST MODE ACTIVATED*
+
+✅ Your test subscription is now active!
+📅 Valid until: ${expiresAt.toLocaleDateString()}
+
+⚠️ This is for testing only.
+
+You now have full access to all features! 💪`;
+
+  await sendText(phone, msg);
+  await delay(500);
+  
+  return sendButtons(phone, 'Start exploring:', [
+    { id: 'today', title: "📅 Today's Plan" },
+    { id: 'week', title: '🗓️ Weekly Plan' },
+    { id: 'menu', title: '📋 Menu' }
+  ]);
 }
 
 // ================= STRIPE WEBHOOK HANDLERS =================
@@ -1122,7 +1186,7 @@ async function initializeStripePrices() {
     const prices = await stripe.prices.list({ limit: 10, active: true });
     
     for (const price of prices.data) {
-      if (price.metadata?.app === 'Ultimate FitBuddy') {
+      if (price.metadata?.app === 'fitcoach') {
         if (price.recurring?.interval === 'week') {
           PRICE_IDS.weekly = price.id;
         } else if (price.recurring?.interval === 'month') {
@@ -1134,9 +1198,9 @@ async function initializeStripePrices() {
     // Create weekly price if not exists
     if (!PRICE_IDS.weekly) {
       const weeklyProduct = await stripe.products.create({
-        name: 'Ultimate FitBuddy AI - Weekly Plan',
+        name: `${APP_NAME} - Weekly Plan`,
         description: '7 days unlimited access to personalized fitness plans',
-        metadata: { app: 'Ultimate FitBuddy' }
+        metadata: { app: 'fitbuddy' }
       });
       
       const weeklyPrice = await stripe.prices.create({
@@ -1144,7 +1208,7 @@ async function initializeStripePrices() {
         unit_amount: SUBSCRIPTION_PLANS.weekly.price, // Already in paise
         currency: SUBSCRIPTION_PLANS.weekly.currency,
         recurring: { interval: 'week' },
-        metadata: { app: 'Ultimate FitBuddy' }
+        metadata: { app: 'fitbuddy' }
       });
       
       PRICE_IDS.weekly = weeklyPrice.id;
@@ -1154,9 +1218,9 @@ async function initializeStripePrices() {
     // Create monthly price if not exists
     if (!PRICE_IDS.monthly) {
       const monthlyProduct = await stripe.products.create({
-        name: 'Ultimate FitBuddy AI - Monthly Plan',
+        name: `${APP_NAME} - Monthly Plan`,
         description: '30 days unlimited access to personalized fitness plans',
-        metadata: { app: 'Ultimate FitBuddy' }
+        metadata: { app: 'fitbuddy' }
       });
       
       const monthlyPrice = await stripe.prices.create({
@@ -1164,7 +1228,7 @@ async function initializeStripePrices() {
         unit_amount: SUBSCRIPTION_PLANS.monthly.price, // Already in paise
         currency: SUBSCRIPTION_PLANS.monthly.currency,
         recurring: { interval: 'month' },
-        metadata: { app: 'Ultimate FitBuddy' }
+        metadata: { app: 'fitbuddy' }
       });
       
       PRICE_IDS.monthly = monthlyPrice.id;
@@ -1646,67 +1710,73 @@ async function sendMotivation(phone, data) {
   ]);
 }
 
-// ================= IMAGE GENERATION (Fixed) =================
+// ================= IMAGE GENERATION (Using Pollinations.ai) =================
 async function sendWorkoutImage(phone, data, workoutType) {
   try {
-    const workoutDesc = {
-      chest: 'muscular person doing bench press chest fly gym workout',
-      back: 'athletic person doing lat pulldown rowing back workout gym',
-      shoulders: 'fit person doing shoulder press lateral raise workout',
-      arms: 'person doing bicep curls tricep dips arm workout',
-      legs: 'athletic person doing barbell squat leg press workout',
-      core: 'fit person doing plank crunches six pack abs workout',
-      full_body: 'person doing full body functional crossfit training',
-      upper_body: 'muscular person doing upper body dumbbell workout',
-      lower_body: 'athletic person doing lunges leg workout glutes',
-      push: 'person doing push ups chest press tricep workout',
-      pull: 'fit person doing pull ups chin ups back workout',
-      cardio: 'athletic person running on treadmill cardio workout'
+    const workoutImages = {
+      chest: 'person bench press dumbbell chest workout gym',
+      back: 'person pull ups lat pulldown back muscles gym',
+      shoulders: 'person overhead press shoulder workout dumbbells',
+      arms: 'person bicep curls tricep exercise arm workout',
+      legs: 'person squats leg press quadriceps workout gym',
+      core: 'person plank exercise six pack abs core workout',
+      full_body: 'person functional training burpees full body workout',
+      upper_body: 'person push ups upper body strength training',
+      lower_body: 'person lunges deadlift lower body workout',
+      push: 'person bench press push ups chest triceps workout',
+      pull: 'person rowing pull ups back biceps workout',
+      cardio: 'person running treadmill cardio exercise gym'
     };
     
-    const desc = workoutDesc[workoutType] || 'fit person doing intense workout exercise';
-    const location = data.trainingPlace === 'gym' ? 'in modern gym with equipment' : 
-                     data.trainingPlace === 'home' ? 'at home workout space' : 'outdoor fitness';
-    const gender = data.gender === 'female' ? 'fit woman' : 'fit man';
+    const workoutDesc = workoutImages[workoutType] || 'person fitness exercise workout gym';
     
-    const prompt = `${gender} ${desc} ${location}, fitness photography, athletic body, motivational, dynamic action shot, professional lighting, high energy, 4k quality`;
-    const encodedPrompt = encodeURIComponent(prompt);
-    const seed = Math.floor(Math.random() * 100000);
+    const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(workoutDesc)}?width=512&height=512&nologo=true&seed=${Date.now()}`;
     
-    const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&nologo=true&seed=${seed}`;
+    console.log('Generating workout image:', imageUrl);
     
-    // Pre-fetch to ensure image is ready
-    await axios.get(imageUrl, { timeout: 20000, responseType: 'arraybuffer' });
+    // Fetch image with longer timeout
+    const response = await axios.get(imageUrl, { 
+      timeout: 30000, 
+      responseType: 'arraybuffer',
+      headers: { 'Accept': 'image/*' }
+    });
     
-    await sendImage(phone, imageUrl, `💪 ${workoutType.replace('_', ' ').toUpperCase()} WORKOUT`);
+    if (response.status === 200) {
+      await sendImage(phone, imageUrl, `💪 ${workoutType.replace('_', ' ').toUpperCase()} WORKOUT`);
+      console.log('Workout image sent successfully');
+    }
     
   } catch (err) {
     console.error('Workout image error:', err.message);
-    // Continue without image
+    // Continue without image - don't block the workout plan
   }
 }
 
 async function sendDietImage(phone, data) {
   try {
-    const dietDesc = {
-      vegetarian: 'delicious vegetarian indian meal thali with paneer dal vegetables roti',
-      'non-vegetarian': 'healthy high protein meal grilled chicken breast rice vegetables',
-      vegan: 'colorful vegan buddha bowl with quinoa chickpeas avocado vegetables',
-      eggetarian: 'nutritious meal with eggs omelette vegetables whole grain toast'
+    const dietImages = {
+      vegetarian: 'healthy vegetarian meal plate vegetables paneer rice indian food',
+      'non-vegetarian': 'grilled chicken breast rice vegetables healthy protein meal',
+      vegan: 'vegan buddha bowl quinoa vegetables avocado healthy plant based',
+      eggetarian: 'eggs omelette vegetables healthy breakfast plate toast'
     };
     
-    const desc = dietDesc[data.diet] || 'healthy balanced nutritious meal plate';
+    const dietDesc = dietImages[data.diet] || 'healthy balanced meal plate';
     
-    const prompt = `${desc}, food photography, healthy meal prep, beautiful plating, natural lighting, top view, appetizing, professional food photo, 4k`;
-    const encodedPrompt = encodeURIComponent(prompt);
-    const seed = Math.floor(Math.random() * 100000);
+    const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(dietDesc)}?width=512&height=512&nologo=true&seed=${Date.now()}`;
     
-    const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&nologo=true&seed=${seed}`;
+    console.log('Generating diet image:', imageUrl);
     
-    // Pre-fetch to ensure image is ready
-    await axios.get(imageUrl, { timeout: 20000, responseType: 'arraybuffer' });
+    const response = await axios.get(imageUrl, { 
+      timeout: 30000, 
+      responseType: 'arraybuffer',
+      headers: { 'Accept': 'image/*' }
+    });
     
-    await sendImage(phone, imageUrl, `🥗 YOUR ${data.diet.toUpperCase()} MEAL PLAN`);
+    if (response.status === 200) {
+      await sendImage(phone, imageUrl, `🥗 YOUR ${data.diet.toUpperCase()} MEAL PLAN`);
+      console.log('Diet image sent successfully');
+    }
     
   } catch (err) {
     console.error('Diet image error:', err.message);
@@ -1715,27 +1785,19 @@ async function sendDietImage(phone, data) {
 
 async function sendMotivationalImage(phone, data) {
   try {
-    const goalDesc = {
-      weight_loss: 'fit person showing weight loss transformation before after success',
-      muscle_gain: 'muscular bodybuilder flexing muscles gym motivation',
-      general_fitness: 'happy healthy fit person exercising outdoor sunrise',
-      recomposition: 'athletic toned person showing lean muscle definition',
-      endurance: 'marathon runner athlete endurance sports motivation',
-      flexibility: 'person doing yoga pose flexibility stretching peaceful'
-    };
+    const prompt = 'fitness motivation success transformation athletic person gym workout';
     
-    const desc = goalDesc[data.goal] || 'fitness motivation success transformation';
-    const gender = data.gender === 'female' ? 'woman' : 'man';
+    const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&nologo=true&seed=${Date.now()}`;
     
-    const prompt = `inspirational ${gender} ${desc}, motivational fitness, determination, sunrise golden hour, epic cinematic, never give up, success mindset, 4k`;
-    const encodedPrompt = encodeURIComponent(prompt);
-    const seed = Math.floor(Math.random() * 100000);
+    const response = await axios.get(imageUrl, { 
+      timeout: 30000, 
+      responseType: 'arraybuffer',
+      headers: { 'Accept': 'image/*' }
+    });
     
-    const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&nologo=true&seed=${seed}`;
-    
-    await axios.get(imageUrl, { timeout: 20000, responseType: 'arraybuffer' });
-    
-    await sendImage(phone, imageUrl, `🔥 STAY FOCUSED, ${data.name.toUpperCase()}!`);
+    if (response.status === 200) {
+      await sendImage(phone, imageUrl, `🔥 STAY FOCUSED, ${data.name.toUpperCase()}!`);
+    }
     
   } catch (err) {
     console.error('Motivation image error:', err.message);
@@ -1859,7 +1921,7 @@ setInterval(() => {
 
 // ================= START =================
 app.listen(PORT, async () => {
-  console.log(`🏋️ Ultimate FitBuddy AI running on port ${PORT}`);
+  console.log(`💪 ${APP_NAME} running on port ${PORT}`);
   console.log(`📱 Webhook ready at /`);
   console.log(`💳 Stripe webhook at /stripe-webhook`);
   console.log(`❤️ Health check at /health`);
