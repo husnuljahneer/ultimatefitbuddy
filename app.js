@@ -1,30 +1,21 @@
 // ================= IMPORTS =================
 const express = require('express');
 const axios = require('axios');
-const { pipeline } = require('@huggingface/transformers');
+const { Groq } = require('groq-sdk');
 
 // ================= APP =================
 const app = express();
 app.use(express.json());
 
 // ================= CONFIG =================
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 7860;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
 const PHONE_NUMBER_ID = '944965828697095';
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const WHATSAPP_API_URL = `https://graph.facebook.com/v23.0/${PHONE_NUMBER_ID}/messages`;
 
-// ================= NLP MODEL =================
-let classifier;
-async function loadModel() {
-  classifier = await pipeline(
-    'sentiment-analysis',
-    'Xenova/distilbert-base-uncased-finetuned-sst-2-english'
-  );
-  console.log('🤗 NLP model loaded');
-}
-loadModel();
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // ================= IN-MEMORY STORE =================
 const users = {};
@@ -43,121 +34,119 @@ app.get('/', (req, res) => {
 
 // ================= WEBHOOK MESSAGE =================
 app.post('/', (req, res) => {
-  // ALWAYS ACK FIRST
-  res.status(200).end();
+  res.status(200).end(); // ACK immediately
 
   const msg = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
   if (!msg || !msg.from) return;
 
-  const phone = msg.from;
-  const text = msg.text?.body?.toLowerCase() || '';
-
-  // Async processing (do NOT block webhook)
-  handleMessage(phone, text);
+  handleMessage(msg.from, msg.text?.body?.trim());
 });
 
 // ================= MESSAGE HANDLER =================
 async function handleMessage(phone, text) {
-  try {
-    if (!users[phone]) {
-      users[phone] = { state: 'ONBOARDING', profile: {} };
-      return sendText(phone, welcomeMessage());
-    }
+  if (!users[phone]) {
+    users[phone] = { step: 'NAME', data: {} };
+    return sendText(phone, '👋 Welcome! What is your name?');
+  }
 
-    const user = users[phone];
+  const user = users[phone];
 
-    if (user.state === 'ONBOARDING') {
-      extractProfile(user.profile, text);
+  switch (user.step) {
+    case 'NAME':
+      user.data.name = text;
+      user.step = 'AGE';
+      return sendText(phone, 'How old are you?');
 
-      if (isProfileComplete(user.profile)) {
-        user.state = 'ACTIVE';
-        return sendText(phone, generatePlan(user.profile));
-      }
+    case 'AGE':
+      user.data.age = text;
+      user.step = 'HEIGHT';
+      return sendText(phone, 'What is your height in cm?');
 
-      return sendText(phone, askMissing(user.profile));
-    }
+    case 'HEIGHT':
+      user.data.height = text;
+      user.step = 'WEIGHT';
+      return sendText(phone, 'What is your weight in kg?');
 
-    return sendText(phone, '✅ Your plan is active. More features coming soon!');
-  } catch (err) {
-    console.error('❌ Handler error:', err.message);
+    case 'WEIGHT':
+      user.data.weight = text;
+      user.step = 'GOAL';
+      return sendText(phone, 'What is your goal? (muscle gain / fat loss / maintenance)');
+
+    case 'GOAL':
+      user.data.goal = text;
+      user.step = 'DIET';
+      return sendText(phone, 'What is your diet preference? (veg / non-veg / vegan)');
+
+    case 'DIET':
+      user.data.diet = text;
+      user.step = 'PLACE';
+      return sendText(phone, 'Where do you work out? (home / gym)');
+
+    case 'PLACE':
+      user.data.place = text;
+      user.step = 'GENERATING';
+      sendText(phone, '⏳ Generating your personalized plan...');
+      return generateAndSendPlan(phone, user.data);
+
+    default:
+      return sendText(phone, 'Your plan is already active 💪');
   }
 }
 
-// ================= NLP + EXTRACTION =================
-function extractProfile(profile, text) {
-  const age = text.match(/(\d{2})\s*(years|yr|yo)?/);
-  const height = text.match(/(\d{3})\s*cm/);
-  const weight = text.match(/(\d{2})\s*kg/);
+// ================= GROQ PLAN GENERATION =================
+async function generateAndSendPlan(phone, data) {
+  const prompt = `
+You are a professional fitness and nutrition coach.
 
-  if (age) profile.age = Number(age[1]);
-  if (height) profile.height = Number(height[1]);
-  if (weight) profile.weight = Number(weight[1]);
+Create a 1-day workout and diet plan.
 
-  if (text.includes('muscle')) profile.goal = 'muscle gain';
-  if (text.includes('fat')) profile.goal = 'fat loss';
+User details:
+Name: ${data.name}
+Age: ${data.age}
+Height: ${data.height} cm
+Weight: ${data.weight} kg
+Goal: ${data.goal}
+Diet: ${data.diet}
+Workout place: ${data.place}
 
-  if (text.includes('non')) profile.diet = 'non-veg';
-  else if (text.includes('veg')) profile.diet = 'veg';
-}
+Rules:
+- Keep it simple
+- No medical claims
+- Use bullet points
+- WhatsApp-friendly formatting
+`;
 
-// ================= CHECKS =================
-function isProfileComplete(p) {
-  return p.age && p.height && p.weight && p.goal && p.diet;
-}
+  try {
+    const completion = await groq.chat.completions.create({
+      model: 'openai/gpt-oss-120b',
+      temperature: 0.7,
+      messages: [{ role: 'user', content: prompt }]
+    });
 
-function askMissing(p) {
-  if (!p.age) return 'What is your age?';
-  if (!p.height) return 'What is your height in cm?';
-  if (!p.weight) return 'What is your weight in kg?';
-  if (!p.goal) return 'What is your goal? (muscle gain / fat loss)';
-  if (!p.diet) return 'Are you veg or non-veg?';
-}
-
-// ================= PLAN =================
-function generatePlan(p) {
-  return (
-    `🎉 Profile complete!\n\n` +
-    `👤 Age: ${p.age}\n` +
-    `📏 Height: ${p.height} cm\n` +
-    `⚖️ Weight: ${p.weight} kg\n` +
-    `🎯 Goal: ${p.goal}\n` +
-    `🥗 Diet: ${p.diet}\n\n` +
-    `🏋️ Workout:\n• Push-ups 3x12\n• Squats 3x15\n• Plank 3x30s\n\n` +
-    `🥗 Diet:\n• Breakfast: Oats\n• Lunch: Rice + dal\n• Dinner: Roti + protein\n\n` +
-    `💪 Let’s begin!`
-  );
+    const plan = completion.choices[0].message.content;
+    await sendText(phone, plan);
+  } catch (err) {
+    console.error('Groq error:', err.message);
+    await sendText(phone, '❌ Failed to generate plan. Please try again.');
+  }
 }
 
 // ================= WHATSAPP SEND =================
 function sendText(to, body) {
-  return axios
-    .post(
-      WHATSAPP_API_URL,
-      {
-        messaging_product: 'whatsapp',
-        to,
-        type: 'text',
-        text: { body }
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-          'Content-Type': 'application/json'
-        }
+  return axios.post(
+    WHATSAPP_API_URL,
+    {
+      messaging_product: 'whatsapp',
+      to,
+      type: 'text',
+      text: { body }
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json'
       }
-    )
-    .then(() => console.log('📤 Sent to', to))
-    .catch(err =>
-      console.error('❌ WhatsApp send failed:', err.response?.data || err.message)
-    );
-}
-
-// ================= WELCOME =================
-function welcomeMessage() {
-  return (
-    '👋 Welcome to Ultimate FitBuddy AI!\n\n' +
-    'Tell me about yourself in one message.\n\n' +
-    'Example:\n"I am 26 years old, 183 cm, 66 kg, want muscle gain, non veg"'
+    }
   );
 }
 
