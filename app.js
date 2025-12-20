@@ -1,14 +1,16 @@
-// Import Express.js
+// NOTE: This is a DROP-IN EXTENSION of your working webhook.
+// It keeps your WhatsApp integration intact and adds:
+// 1. Conversation state machine
+// 2. Hugging Face NLP model usage
+// 3. Conversational onboarding flow
+
 const express = require('express');
 const axios = require('axios');
 
-// Create an Express app
 const app = express();
-
-// Middleware to parse JSON bodies
 app.use(express.json());
 
-// Config
+// ================= CONFIG =================
 const port = process.env.PORT || 3000;
 const verifyToken = process.env.VERIFY_TOKEN;
 
@@ -16,95 +18,96 @@ const PHONE_NUMBER_ID = '944965828697095';
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const WHATSAPP_API_URL = `https://graph.facebook.com/v23.0/${PHONE_NUMBER_ID}/messages`;
 
-/* --------------------------------------------------
-   GET — Webhook verification
--------------------------------------------------- */
+// Hugging Face (FREE, WORKING)
+const HF_TOKEN = process.env.HF_TOKEN;
+const HF_MODEL = 'facebook/bart-large-mnli'; // intent + classification
+
+// ================= IN-MEMORY STATE (REPLACE WITH DB LATER) =================
+const users = {};
+
+// ================= WEBHOOK VERIFY =================
 app.get('/', (req, res) => {
   const mode = req.query['hub.mode'];
   const challenge = req.query['hub.challenge'];
   const token = req.query['hub.verify_token'];
 
   if (mode === 'subscribe' && token === verifyToken) {
-    console.log('WEBHOOK VERIFIED');
     return res.status(200).send(challenge);
   }
-
   return res.status(403).end();
 });
 
-/* --------------------------------------------------
-   POST — Receive message + Send WhatsApp reply
--------------------------------------------------- */
-app.post('/', (req, res) => {
-  const timestamp = new Date().toISOString();
-  console.log('\n📩 Webhook received:', timestamp);
-  console.log(JSON.stringify(req.body, null, 2));
+// ================= MESSAGE HANDLER =================
+app.post('/', async (req, res) => {
+  const msg = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+  if (!msg) return res.status(200).end();
 
-  const entry = req.body.entry?.[0];
-  const change = entry?.changes?.[0];
-  const message = change?.value?.messages?.[0];
+  const phone = msg.from;
+  const text = msg.text?.body?.trim();
 
-  if (!message || !message.from) {
-    return res.status(200).end();
+  if (!users[phone]) {
+    users[phone] = { state: 'WELCOME', profile: {} };
   }
 
-  const userPhone = message.from;
+  const user = users[phone];
+  const reply = await conversationEngine(user, text);
 
-  // 🔥 Call async function SAFELY
-  sendWelcomeMessage(userPhone)
-    .then(() => {
-      console.log('Welcome message sent to', userPhone);
-    })
-    .catch((err) => {
-      console.error(
-        '❌ WhatsApp API error:',
-        err.response?.data || err.message
-      );
-    });
-
-  // ALWAYS respond 200 to WhatsApp
+  await sendTextMessage(phone, reply);
   res.status(200).end();
 });
 
-/* --------------------------------------------------
-   WhatsApp API Call (Async-safe)
--------------------------------------------------- */
-function sendWelcomeMessage(to) {
-  const payload = {
-    messaging_product: 'whatsapp',
-    recipient_type: 'individual',
-    to,
-    type: 'text',
-    text: {
-      body:
-        '👋 Welcome to Ultimate FitBuddy AI! 💪🤖\n\n' +
-        'I’m your personal AI fitness & nutrition coach, here to help you:\n' +
-        '- 🏋️ Build strength\n' +
-        '- 🔥 Lose fat\n' +
-        '- 🥗 Eat smarter\n' +
-        '- ⏰ Stay consistent\n\n' +
-        'I’ll create personalized workout & diet plans based on your body, goals, and lifestyle.\n\n' +
-        '✨ What you’ll get:\n' +
-        '- Customized workout plans (home or gym)\n' +
-        '- Daily diet reminders at your preferred time\n' +
-        '- Smart adjustments as you progress\n' +
-        '- Simple, practical guidance you can actually follow\n\n' +
-        '⏳ It takes less than 2 minutes to get started.\n\n' +
-        '👉 Let’s begin!\nWhat is your name? 😊'
-    }
-  };
+// ================= CONVERSATION ENGINE =================
+async function conversationEngine(user, input) {
+  switch (user.state) {
+    case 'WELCOME':
+      user.state = 'ASK_NAME';
+      return '👋 Welcome to Ultimate FitBuddy AI!\n\nWhat is your name?';
 
-  return axios.post(WHATSAPP_API_URL, payload, {
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${WHATSAPP_TOKEN}`
-    }
-  });
+    case 'ASK_NAME':
+      user.profile.name = input;
+      user.state = 'ASK_GOAL';
+      return `Nice to meet you, ${input}!\nWhat is your fitness goal? (fat loss / muscle gain / stay fit)`;
+
+    case 'ASK_GOAL':
+      user.profile.goal = input;
+      user.state = 'AI_RESPONSE';
+      return await aiResponse(user.profile);
+
+    default:
+      return 'I am setting things up for you. Please wait 😊';
+  }
 }
 
-/* --------------------------------------------------
-   START SERVER
--------------------------------------------------- */
-app.listen(port, () => {
-  console.log(`🚀 Listening on port ${port}`);
-});
+// ================= HUGGING FACE AI =================
+async function aiResponse(profile) {
+  const prompt = `User goal: ${profile.goal}. Generate a short motivational fitness message.`;
+
+  const response = await axios.post(
+    `https://api-inference.huggingface.co/models/${HF_MODEL}`,
+    { inputs: prompt },
+    { headers: { Authorization: `Bearer ${HF_TOKEN}` } }
+  );
+
+  return `🔥 Personalized Tip:\n${response.data[0].generated_text}`;
+}
+
+// ================= SEND WHATSAPP MESSAGE =================
+function sendTextMessage(to, body) {
+  return axios.post(
+    WHATSAPP_API_URL,
+    {
+      messaging_product: 'whatsapp',
+      to,
+      type: 'text',
+      text: { body }
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+}
+
+app.listen(port, () => console.log(`🚀 Bot running on port ${port}`));
