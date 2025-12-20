@@ -99,7 +99,8 @@ const EQUIPMENT = {
   pull_up_bar: 'Pull-up Bar',
   bench: 'Bench',
   machines: 'Gym Machines',
-  cardio_machines: 'Treadmill/Bike'
+  cardio_machines: 'Treadmill/Bike',
+  full_gym: 'Full Gym Access' // For gym users
 };
 
 const MUSCLE_GROUPS = ['chest', 'back', 'shoulders', 'arms', 'legs', 'core', 'full_body', 'upper_body', 'lower_body', 'push', 'pull', 'cardio'];
@@ -449,8 +450,15 @@ async function handleOnboarding(phone, user, input, originalText) {
     case 'TRAINING_PLACE':
       if (!TRAINING_PLACES[input]) return sendTrainingPlaceButtons(phone);
       user.data.trainingPlace = input;
+      
+      // If gym, skip equipment question (gym has all equipment)
+      if (input === 'gym') {
+        user.data.equipment = ['full_gym']; // Mark as full gym access
+        return completeOnboarding(phone, user);
+      }
+      
       user.step = 'EQUIPMENT';
-      return sendEquipmentMenu(phone, user.data.equipment);
+      return sendEquipmentMenu(phone, user.data.equipment, 1);
 
     // Step 14: Equipment (Multi-select with pagination)
     case 'EQUIPMENT':
@@ -673,9 +681,15 @@ async function sendProfileSummary(phone, data) {
     ? 'None'
     : data.conditions.map(c => CONDITIONS[c]).join(', ');
   
-  const equipmentText = data.equipment.includes('none') || data.equipment.length === 0
-    ? 'Bodyweight only'
-    : data.equipment.map(e => EQUIPMENT[e]).join(', ');
+  // Handle equipment display based on training place
+  let equipmentText;
+  if (data.trainingPlace === 'gym' || data.equipment.includes('full_gym')) {
+    equipmentText = '🏋️ Full Gym Access';
+  } else if (data.equipment.includes('none') || data.equipment.length === 0) {
+    equipmentText = 'Bodyweight only';
+  } else {
+    equipmentText = data.equipment.map(e => EQUIPMENT[e]).join(', ');
+  }
 
   const msg = `✅ *Your Profile*
 
@@ -962,10 +976,7 @@ async function createCheckoutSession(phone, plan) {
           phone: phone,
           plan: plan
         }
-      },
-      // Force INR billing
-      currency: 'inr',
-      locale: 'en-IN'
+      }
     });
     
     const planInfo = SUBSCRIPTION_PLANS[plan];
@@ -1260,9 +1271,16 @@ _Rest is part of the process!_ 💪`;
 
 async function generateWorkoutPlan(phone, data, workoutType, dayName) {
   const stats = calculateStats(data);
-  const equipmentList = data.equipment.includes('none') 
-    ? 'Bodyweight only' 
-    : data.equipment.map(e => EQUIPMENT[e]).join(', ');
+  
+  // Handle equipment display
+  let equipmentList;
+  if (data.trainingPlace === 'gym' || data.equipment.includes('full_gym')) {
+    equipmentList = 'Full gym access (all machines, dumbbells, barbells, cables, etc.)';
+  } else if (data.equipment.includes('none') || data.equipment.length === 0) {
+    equipmentList = 'Bodyweight only';
+  } else {
+    equipmentList = data.equipment.map(e => EQUIPMENT[e]).join(', ');
+  }
 
   const prompt = `Create a ${workoutType.replace('_', ' ')} workout plan.
 
@@ -1313,6 +1331,10 @@ FORMAT EXACTLY:
 End with motivation using their name.`;
 
   try {
+    // Send workout image first
+    await sendWorkoutImage(phone, data, workoutType);
+    await delay(1500);
+    
     const completion = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       temperature: 0.7,
@@ -1321,10 +1343,6 @@ End with motivation using their name.`;
     });
 
     const workout = completion.choices[0].message.content;
-    
-    // Send workout image first
-    await sendWorkoutImage(phone, data, workoutType);
-    await delay(1000);
     await sendText(phone, workout);
 
   } catch (err) {
@@ -1632,60 +1650,64 @@ async function sendMotivation(phone, data) {
 async function sendWorkoutImage(phone, data, workoutType) {
   try {
     const workoutDesc = {
-      chest: 'person doing bench press chest workout',
-      back: 'person doing lat pulldown back workout',
-      shoulders: 'person doing shoulder press workout',
-      arms: 'person doing bicep curl arm workout',
-      legs: 'person doing squat leg workout',
-      core: 'person doing plank core abs workout',
-      full_body: 'person doing full body functional training',
-      upper_body: 'person doing upper body dumbbell workout',
-      lower_body: 'person doing leg press lower body workout',
-      push: 'person doing push up chest workout',
-      pull: 'person doing pull up back workout',
-      cardio: 'person running cardio training'
+      chest: 'muscular person doing bench press chest fly gym workout',
+      back: 'athletic person doing lat pulldown rowing back workout gym',
+      shoulders: 'fit person doing shoulder press lateral raise workout',
+      arms: 'person doing bicep curls tricep dips arm workout',
+      legs: 'athletic person doing barbell squat leg press workout',
+      core: 'fit person doing plank crunches six pack abs workout',
+      full_body: 'person doing full body functional crossfit training',
+      upper_body: 'muscular person doing upper body dumbbell workout',
+      lower_body: 'athletic person doing lunges leg workout glutes',
+      push: 'person doing push ups chest press tricep workout',
+      pull: 'fit person doing pull ups chin ups back workout',
+      cardio: 'athletic person running on treadmill cardio workout'
     };
     
-    const desc = workoutDesc[workoutType] || 'person doing fitness workout';
-    const location = data.trainingPlace === 'gym' ? 'in modern gym' : data.trainingPlace === 'home' ? 'at home' : 'outdoors';
+    const desc = workoutDesc[workoutType] || 'fit person doing intense workout exercise';
+    const location = data.trainingPlace === 'gym' ? 'in modern gym with equipment' : 
+                     data.trainingPlace === 'home' ? 'at home workout space' : 'outdoor fitness';
+    const gender = data.gender === 'female' ? 'fit woman' : 'fit man';
     
-    const prompt = `${desc} ${location}, fitness motivation, professional photography, athletic, dynamic lighting, high quality`;
+    const prompt = `${gender} ${desc} ${location}, fitness photography, athletic body, motivational, dynamic action shot, professional lighting, high energy, 4k quality`;
     const encodedPrompt = encodeURIComponent(prompt);
     const seed = Math.floor(Math.random() * 100000);
     
     const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&nologo=true&seed=${seed}`;
     
     // Pre-fetch to ensure image is ready
-    await axios.get(imageUrl, { timeout: 15000, responseType: 'arraybuffer' });
+    await axios.get(imageUrl, { timeout: 20000, responseType: 'arraybuffer' });
     
     await sendImage(phone, imageUrl, `💪 ${workoutType.replace('_', ' ').toUpperCase()} WORKOUT`);
+    
   } catch (err) {
     console.error('Workout image error:', err.message);
-    // Skip image silently
+    // Continue without image
   }
 }
 
 async function sendDietImage(phone, data) {
   try {
     const dietDesc = {
-      vegetarian: 'healthy vegetarian meal with vegetables legumes paneer',
-      'non-vegetarian': 'healthy protein meal grilled chicken vegetables rice',
-      vegan: 'colorful vegan plant based meal vegetables fruits grains',
-      eggetarian: 'healthy meal with eggs vegetables whole grains'
+      vegetarian: 'delicious vegetarian indian meal thali with paneer dal vegetables roti',
+      'non-vegetarian': 'healthy high protein meal grilled chicken breast rice vegetables',
+      vegan: 'colorful vegan buddha bowl with quinoa chickpeas avocado vegetables',
+      eggetarian: 'nutritious meal with eggs omelette vegetables whole grain toast'
     };
     
-    const desc = dietDesc[data.diet] || 'healthy balanced nutritious meal';
+    const desc = dietDesc[data.diet] || 'healthy balanced nutritious meal plate';
     
-    const prompt = `${desc}, meal prep, healthy eating, beautiful food photography, natural lighting, top view, food magazine style`;
+    const prompt = `${desc}, food photography, healthy meal prep, beautiful plating, natural lighting, top view, appetizing, professional food photo, 4k`;
     const encodedPrompt = encodeURIComponent(prompt);
     const seed = Math.floor(Math.random() * 100000);
     
     const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&nologo=true&seed=${seed}`;
     
     // Pre-fetch to ensure image is ready
-    await axios.get(imageUrl, { timeout: 15000, responseType: 'arraybuffer' });
+    await axios.get(imageUrl, { timeout: 20000, responseType: 'arraybuffer' });
     
     await sendImage(phone, imageUrl, `🥗 YOUR ${data.diet.toUpperCase()} MEAL PLAN`);
+    
   } catch (err) {
     console.error('Diet image error:', err.message);
   }
@@ -1694,25 +1716,27 @@ async function sendDietImage(phone, data) {
 async function sendMotivationalImage(phone, data) {
   try {
     const goalDesc = {
-      weight_loss: 'fit person weight loss transformation success',
-      muscle_gain: 'muscular athletic person bodybuilding success',
-      general_fitness: 'healthy fit person exercising happy',
-      recomposition: 'athletic toned person fitness transformation',
-      endurance: 'runner athlete endurance training',
-      flexibility: 'person doing yoga stretching flexibility'
+      weight_loss: 'fit person showing weight loss transformation before after success',
+      muscle_gain: 'muscular bodybuilder flexing muscles gym motivation',
+      general_fitness: 'happy healthy fit person exercising outdoor sunrise',
+      recomposition: 'athletic toned person showing lean muscle definition',
+      endurance: 'marathon runner athlete endurance sports motivation',
+      flexibility: 'person doing yoga pose flexibility stretching peaceful'
     };
     
-    const desc = goalDesc[data.goal] || 'fitness motivation success';
+    const desc = goalDesc[data.goal] || 'fitness motivation success transformation';
+    const gender = data.gender === 'female' ? 'woman' : 'man';
     
-    const prompt = `${desc}, motivational, inspiring, sunrise, determination, epic cinematic lighting, professional photography`;
+    const prompt = `inspirational ${gender} ${desc}, motivational fitness, determination, sunrise golden hour, epic cinematic, never give up, success mindset, 4k`;
     const encodedPrompt = encodeURIComponent(prompt);
     const seed = Math.floor(Math.random() * 100000);
     
     const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&nologo=true&seed=${seed}`;
     
-    await axios.get(imageUrl, { timeout: 15000, responseType: 'arraybuffer' });
+    await axios.get(imageUrl, { timeout: 20000, responseType: 'arraybuffer' });
     
     await sendImage(phone, imageUrl, `🔥 STAY FOCUSED, ${data.name.toUpperCase()}!`);
+    
   } catch (err) {
     console.error('Motivation image error:', err.message);
   }
