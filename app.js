@@ -160,16 +160,30 @@ async function handleOnboarding(phone, user, input, text) {
 // ================= COMPLETED USER ACTIONS =================
 async function handleCompletedUserAction(phone, user, input) {
   const actions = {
+    // Menu commands
     'menu': () => sendMainMenu(phone, user.data.name),
+    'help': () => sendMainMenu(phone, user.data.name),
+    
+    // Plan commands
     'today': () => generateDayPlan(phone, user.data, 0),
     'tomorrow': () => generateDayPlan(phone, user.data, 1),
     'week': () => sendWeekOverview(phone, user.data),
+    
+    // Workout commands
+    'workout': () => generateWorkoutOnly(phone, user.data),
     'workout_only': () => generateWorkoutOnly(phone, user.data),
-    'diet_only': () => generateDietOnly(phone, user.data),
+    'quick': () => generateQuickWorkout(phone, user.data),
     'quick_workout': () => generateQuickWorkout(phone, user.data),
+    'muscle': () => sendMuscleGroupMenu(phone),
     'muscle_group': () => sendMuscleGroupMenu(phone),
-    'progress': () => sendProgressSummary(phone, user),
+    
+    // Diet commands
+    'diet': () => generateDietOnly(phone, user.data),
+    'diet_only': () => generateDietOnly(phone, user.data),
     'tips': () => generateDailyTips(phone, user.data),
+    
+    // Other commands
+    'progress': () => sendProgressSummary(phone, user),
     'motivation': () => sendMotivationalContent(phone, user.data),
     'update_profile': () => { user.step = 'PROFILE'; return sendProfilePrompt(phone, user.data.name); },
     'update_goal': () => { user.step = 'GOAL'; return sendGoalButtons(phone); },
@@ -277,78 +291,68 @@ async function sendMainMenu(phone, name) {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   
-  return sendList(phone, 
-    `${greeting}, ${name}! 👋\n\nWhat would you like today?`,
-    'View Options',
-    [
-      {
-        title: '📋 Daily Plans',
-        rows: [
-          { id: 'today', title: "📅 Today's Full Plan", description: 'Workout + Diet + Tips' },
-          { id: 'tomorrow', title: "📆 Tomorrow's Plan", description: 'Plan ahead for tomorrow' },
-          { id: 'week', title: '🗓️ Weekly Overview', description: 'See your 7-day schedule' }
-        ]
-      },
-      {
-        title: '🏋️ Workouts',
-        rows: [
-          { id: 'workout_only', title: '💪 Workout Only', description: 'Just the exercise plan' },
-          { id: 'quick_workout', title: '⚡ Quick 15-min', description: 'Short on time?' },
-          { id: 'muscle_group', title: '🎯 Target Muscle', description: 'Focus on specific area' }
-        ]
-      },
-      {
-        title: '🍽️ Nutrition',
-        rows: [
-          { id: 'diet_only', title: '🥗 Diet Plan Only', description: 'Meals for today' },
-          { id: 'tips', title: '💡 Nutrition Tips', description: 'Personalized advice' }
-        ]
-      },
-      {
-        title: '⚙️ Settings',
-        rows: [
-          { id: 'progress', title: '📊 My Progress', description: 'Track your journey' },
-          { id: 'motivation', title: '🔥 Motivation', description: 'Get inspired!' },
-          { id: 'update_goal', title: '🎯 Change Goal', description: 'Update your target' },
-          { id: 'restart', title: '🔄 Start Fresh', description: 'Reset everything' }
-        ]
-      }
-    ]
-  );
+  const msg = `${greeting}, ${name}! 👋
+
+🏋️ *FitCoach AI Menu*
+
+📋 *Plans*
+- today → Full plan (workout + diet)
+- tomorrow → Tomorrow's plan
+- week → Weekly overview
+
+💪 *Workouts*
+- workout → Today's workout
+- quick → 15-min express
+- muscle → Target specific muscle
+
+🍽️ *Nutrition*
+- diet → Today's meal plan
+- tips → Get nutrition tips
+
+⚙️ *Other*
+- progress → Your stats
+- motivation → Get inspired
+- restart → Start fresh
+
+_Tap below or type any command!_`;
+
+  await sendText(phone, msg);
+  
+  return sendButtons(phone, '⚡ Quick Actions:', [
+    { id: 'today', title: "📅 Today's Plan" },
+    { id: 'workout_only', title: '💪 Workout' },
+    { id: 'diet_only', title: '🥗 Diet' }
+  ]);
 }
 
 async function sendMuscleGroupMenu(phone) {
-  return sendList(phone,
-    '🎯 *Target Muscle Group*\n\nSelect the area you want to train:',
-    'Select Muscle',
-    [
-      {
-        title: 'Upper Body',
-        rows: [
-          { id: 'chest', title: '🫁 Chest', description: 'Pecs, push movements' },
-          { id: 'back', title: '🔙 Back', description: 'Lats, pull movements' },
-          { id: 'shoulders', title: '💪 Shoulders', description: 'Delts, overhead' },
-          { id: 'arms', title: '💪 Arms', description: 'Biceps & Triceps' }
-        ]
-      },
-      {
-        title: 'Lower Body & Core',
-        rows: [
-          { id: 'legs', title: '🦵 Legs', description: 'Quads, hamstrings, glutes' },
-          { id: 'core', title: '🧘 Core', description: 'Abs, obliques, lower back' }
-        ]
-      },
-      {
-        title: 'Combo Workouts',
-        rows: [
-          { id: 'full_body', title: '🏋️ Full Body', description: 'Hit everything' },
-          { id: 'push', title: '⬆️ Push Day', description: 'Chest, shoulders, triceps' },
-          { id: 'pull', title: '⬇️ Pull Day', description: 'Back, biceps' },
-          { id: 'cardio', title: '🏃 Cardio', description: 'Heart-pumping session' }
-        ]
-      }
-    ]
-  );
+  const msg = `🎯 *Target Muscle Group*
+
+*Upper Body:*
+- chest → Chest/Pecs
+- back → Back/Lats  
+- shoulders → Shoulders
+- arms → Biceps & Triceps
+
+*Lower Body:*
+- legs → Quads, Hamstrings, Glutes
+- core → Abs & Core
+
+*Combos:*
+- full_body → Full Body
+- push → Push Day
+- pull → Pull Day
+- cardio → Cardio Session
+
+_Type the muscle name or tap below:_`;
+
+  await sendText(phone, msg);
+  
+  return sendButtons(phone, 'Popular choices:', [
+    { id: 'chest', title: '💪 Chest' },
+    { id: 'legs', title: '🦵 Legs' },
+    { id: 'full_body', title: '🏋️ Full Body' }
+  ]);
 }
 
 // ================= WEEKLY SCHEDULE GENERATOR =================
