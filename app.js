@@ -238,8 +238,12 @@ async function handleMessage(phone, text, interactiveId) {
   const input = interactiveId || text.toLowerCase();
   
   // Global commands
-  if (['restart', 'reset', 'start over', 'start'].includes(input)) {
+  if (['restart', 'reset', 'start over', 'start', 'clear'].includes(input)) {
+    // Clear everything for this user
     delete users[phone];
+    delete subscriptions[phone]; // Also reset subscription for testing
+    await sendText(phone, '🔄 *All data cleared!*\n\nStarting fresh...');
+    await delay(500);
     return sendWelcome(phone);
   }
   
@@ -448,9 +452,33 @@ async function handleOnboarding(phone, user, input, originalText) {
       user.step = 'EQUIPMENT';
       return sendEquipmentMenu(phone, user.data.equipment);
 
-    // Step 14: Equipment (Multi-select)
+    // Step 14: Equipment (Multi-select with pagination)
     case 'EQUIPMENT':
+      // Handle pagination
+      if (input === 'equip_page_2') return sendEquipmentMenu(phone, user.data.equipment, 2);
+      if (input === 'equip_page_3') return sendEquipmentMenu(phone, user.data.equipment, 3);
+      if (input === 'equip_page_4') return sendEquipmentMenu(phone, user.data.equipment, 4);
+      if (input === 'equip_page_5') return sendEquipmentMenu(phone, user.data.equipment, 5);
+      
+      // Handle number inputs (1-9)
+      const equipNumbers = { '1': 'none', '2': 'dumbbells', '3': 'resistance_bands', '4': 'barbell', '5': 'kettlebell', '6': 'pull_up_bar', '7': 'bench', '8': 'machines', '9': 'cardio_machines' };
+      const equipFromNumber = equipNumbers[input];
+      if (equipFromNumber) {
+        if (equipFromNumber === 'none') {
+          user.data.equipment = ['none'];
+          return completeOnboarding(phone, user);
+        }
+        if (!user.data.equipment.includes(equipFromNumber)) {
+          user.data.equipment = user.data.equipment.filter(e => e !== 'none');
+          user.data.equipment.push(equipFromNumber);
+        }
+        return sendEquipmentMenu(phone, user.data.equipment, 1);
+      }
+      
       if (input === 'equipment_done') {
+        if (user.data.equipment.length === 0) {
+          user.data.equipment = ['none'];
+        }
         return completeOnboarding(phone, user);
       }
       if (input === 'none') {
@@ -461,7 +489,7 @@ async function handleOnboarding(phone, user, input, originalText) {
         user.data.equipment = user.data.equipment.filter(e => e !== 'none');
         user.data.equipment.push(input);
       }
-      return sendEquipmentMenu(phone, user.data.equipment);
+      return sendEquipmentMenu(phone, user.data.equipment, 1);
 
     default:
       return sendText(phone, 'Type "restart" to begin again.');
@@ -570,14 +598,14 @@ async function sendTrainingPlaceButtons(phone) {
   ]);
 }
 
-async function sendEquipmentMenu(phone, selected) {
+async function sendEquipmentMenu(phone, selected, page = 1) {
   const selectedText = selected.length > 0 
-    ? `\n\n✅ Selected: ${selected.map(e => EQUIPMENT[e]).join(', ')}`
+    ? `\n\n✅ *Selected:* ${selected.map(e => EQUIPMENT[e]).join(', ')}`
     : '';
 
   const msg = `🏋️ *What equipment do you have?*
 
-Select all that apply:
+Select all that apply, then tap "Done":
 
 1️⃣ No Equipment (Bodyweight only)
 2️⃣ Dumbbells
@@ -587,17 +615,43 @@ Select all that apply:
 6️⃣ Pull-up Bar
 7️⃣ Bench
 8️⃣ Gym Machines
-9️⃣ Cardio Machines${selectedText}
+9️⃣ Cardio Machines (Treadmill/Bike)${selectedText}
 
-_Tap below or type number:_`;
+_Type number (1-9) or tap buttons. Tap "More" for more options._`;
 
   await sendText(phone, msg);
   
-  return sendButtons(phone, 'Quick select:', [
-    { id: 'none', title: '🙅 No Equipment' },
-    { id: 'dumbbells', title: '🏋️ Dumbbells' },
-    { id: 'equipment_done', title: '✔️ Done' }
-  ]);
+  if (page === 1) {
+    return sendButtons(phone, 'Select equipment:', [
+      { id: 'equip_page_2', title: '➡️ More Options' },
+      { id: 'none', title: '🙅 No Equipment' },
+      { id: 'equipment_done', title: '✔️ Done' }
+    ]);
+  } else if (page === 2) {
+    return sendButtons(phone, 'Upper body equipment:', [
+      { id: 'dumbbells', title: '🏋️ Dumbbells' },
+      { id: 'barbell', title: '🏋️ Barbell' },
+      { id: 'equip_page_3', title: '➡️ More' }
+    ]);
+  } else if (page === 3) {
+    return sendButtons(phone, 'More equipment:', [
+      { id: 'resistance_bands', title: '🪢 Bands' },
+      { id: 'kettlebell', title: '🔔 Kettlebell' },
+      { id: 'equip_page_4', title: '➡️ More' }
+    ]);
+  } else if (page === 4) {
+    return sendButtons(phone, 'Gym equipment:', [
+      { id: 'pull_up_bar', title: '🔩 Pull-up Bar' },
+      { id: 'bench', title: '🪑 Bench' },
+      { id: 'equip_page_5', title: '➡️ More' }
+    ]);
+  } else {
+    return sendButtons(phone, 'Machines:', [
+      { id: 'machines', title: '🏋️ Gym Machines' },
+      { id: 'cardio_machines', title: '🏃 Cardio' },
+      { id: 'equipment_done', title: '✔️ Done' }
+    ]);
+  }
 }
 
 // ================= COMPLETE ONBOARDING =================
@@ -680,7 +734,7 @@ ${subStatus}
 • status - Subscription status
 • subscribe - View plans
 • profile - Your profile
-• restart - Start fresh
+• restart - 🔄 Start fresh (reset all)
 
 _Tap below or type a command:_`;
 
@@ -688,8 +742,8 @@ _Tap below or type a command:_`;
   
   return sendButtons(phone, '⚡ Quick Actions:', [
     { id: 'today', title: "📅 Today's Plan" },
-    { id: 'workout', title: '💪 Workout' },
-    { id: 'diet', title: '🥗 Diet' }
+    { id: 'subscribe', title: '💳 Subscribe' },
+    { id: 'restart', title: '🔄 Restart' }
   ]);
 }
 
