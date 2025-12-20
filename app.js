@@ -72,26 +72,32 @@ async function sendWelcomeMessage(to) {
   const payload = {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
-    to: to,
+    to,
     type: 'text',
     text: {
       body:
         '👋 Welcome to Ultimate FitBuddy AI! 💪🤖\n\n' +
-        'I’m your personal AI fitness & nutrition coach, here to help you:\n' +
-        '- 🏋️ Build strength\n' +
-        '- 🔥 Lose fat\n' +
-        '- 🥗 Eat smarter\n' +
-        '- ⏰ Stay consistent\n\n' +
-        'I’ll create personalized workout & diet plans based on your body, goals, and lifestyle.\n\n' +
-        '✨ What you’ll get:\n' +
-        '- Customized workout plans (home or gym)\n' +
-        '- Daily diet reminders at your preferred time\n' +
-        '- Smart adjustments as you progress\n' +
-        '- Simple, practical guidance you can actually follow\n\n' +
-        '⏳ It takes less than 2 minutes to get started.\n\n' +
-        '👉 Let’s begin!\nWhat is your name? 😊'
+        'I’m your personal AI fitness & nutrition coach.\n\n' +
+        'What is your name? 😊'
     }
   };
+
+  try {
+    const response = await axios.post(WHATSAPP_API_URL, payload, {
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`
+      }
+    });
+
+    console.log('✅ WhatsApp API response:', response.data);
+  } catch (err) {
+    console.error(
+      '❌ WhatsApp API error:',
+      err.response?.data || err.message
+    );
+  }
+}
 
   await axios.post(WHATSAPP_API_URL, payload, {
     headers: {
