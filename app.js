@@ -98,28 +98,59 @@ async function generateAndSendPlan(phone, data) {
   const prompt = `
 You are a professional fitness and nutrition coach.
 
-Create a 1-day workout and diet plan.
+Generate a clear, friendly, WhatsApp-ready 1-day workout and diet plan.
 
-User details:
+User profile:
 Name: ${data.name}
 Age: ${data.age}
 Height: ${data.height} cm
 Weight: ${data.weight} kg
 Goal: ${data.goal}
-Diet: ${data.diet}
+Diet preference: ${data.diet}
 Workout place: ${data.place}
 
-Rules:
-- Keep it simple
-- No medical claims
-- Use bullet points
-- WhatsApp-friendly formatting
+IMPORTANT FORMATTING RULES (STRICT):
+- Output MUST be plain text only
+- Do NOT use markdown (*, **, _, #)
+- Use emojis for section headers
+- Keep lines short (mobile friendly)
+- Use simple bullet points with "-"
+- Leave one blank line between sections
+- No medical or clinical claims
+- Tone should be motivating and friendly
+
+OUTPUT STRUCTURE (FOLLOW EXACTLY):
+
+Start with:
+"Hey ${data.name}! 👋 Here’s your personalized fitness plan for today 💪"
+
+Then include sections in this order:
+
+🏋️ WORKOUT PLAN
+- 3 to 5 exercises
+- Mention reps or time
+- Adjust for home or gym
+
+🥗 DIET PLAN
+- Breakfast
+- Lunch
+- Snack
+- Dinner
+- Match diet preference
+
+💧 DAILY TIPS
+- 2 or 3 simple tips (hydration, sleep, consistency)
+
+End with:
+"🔥 Stay consistent. I’ll be here to guide you every day!"
+
+Keep the entire message concise and WhatsApp-friendly.
 `;
 
   try {
     const completion = await groq.chat.completions.create({
       model: 'openai/gpt-oss-120b',
-      temperature: 0.7,
+      temperature: 0.6,
       messages: [{ role: 'user', content: prompt }]
     });
 
@@ -127,7 +158,7 @@ Rules:
     await sendText(phone, plan);
   } catch (err) {
     console.error('Groq error:', err.message);
-    await sendText(phone, '❌ Failed to generate plan. Please try again.');
+    await sendText(phone, '❌ Failed to generate your plan. Please try again.');
   }
 }
 
