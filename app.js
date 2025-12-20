@@ -8,67 +8,68 @@ const app = express();
 // Middleware to parse JSON bodies
 app.use(express.json());
 
-// Set port and verify_token
+// Config
 const port = process.env.PORT || 3000;
 const verifyToken = process.env.VERIFY_TOKEN;
 
-// WhatsApp config (PERMANENT API)
 const PHONE_NUMBER_ID = '944965828697095';
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const WHATSAPP_API_URL = `https://graph.facebook.com/v23.0/${PHONE_NUMBER_ID}/messages`;
 
 /* --------------------------------------------------
-   GET — Webhook verification (UNCHANGED)
+   GET — Webhook verification
 -------------------------------------------------- */
 app.get('/', (req, res) => {
-  const {
-    'hub.mode': mode,
-    'hub.challenge': challenge,
-    'hub.verify_token': token
-  } = req.query;
+  const mode = req.query['hub.mode'];
+  const challenge = req.query['hub.challenge'];
+  const token = req.query['hub.verify_token'];
 
   if (mode === 'subscribe' && token === verifyToken) {
     console.log('WEBHOOK VERIFIED');
-    res.status(200).send(challenge);
-  } else {
-    res.status(403).end();
+    return res.status(200).send(challenge);
   }
+
+  return res.status(403).end();
 });
 
 /* --------------------------------------------------
    POST — Receive message + Send WhatsApp reply
 -------------------------------------------------- */
-app.post('/', async (req, res) => {
-  const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
-  console.log(`\n\nWebhook received ${timestamp}\n`);
+app.post('/', (req, res) => {
+  const timestamp = new Date().toISOString();
+  console.log('\n📩 Webhook received:', timestamp);
   console.log(JSON.stringify(req.body, null, 2));
 
-  try {
-    // Safely extract WhatsApp user number
-    const entry = req.body.entry?.[0];
-    const change = entry?.changes?.[0];
-    const message = change?.value?.messages?.[0];
+  const entry = req.body.entry?.[0];
+  const change = entry?.changes?.[0];
+  const message = change?.value?.messages?.[0];
 
-    if (!message || !message.from) {
-      return res.status(200).end();
-    }
-
-    const userPhone = message.from;
-
-    // 🔥 Send welcome message using PERMANENT API
-    await sendWelcomeMessage(userPhone);
-
-    res.status(200).end();
-  } catch (error) {
-    console.error('Error processing webhook:', error.message);
-    res.status(200).end(); // Always return 200 to WhatsApp
+  if (!message || !message.from) {
+    return res.status(200).end();
   }
+
+  const userPhone = message.from;
+
+  // 🔥 Call async function SAFELY
+  sendWelcomeMessage(userPhone)
+    .then(() => {
+      console.log('Welcome message sent to', userPhone);
+    })
+    .catch((err) => {
+      console.error(
+        '❌ WhatsApp API error:',
+        err.response?.data || err.message
+      );
+    });
+
+  // ALWAYS respond 200 to WhatsApp
+  res.status(200).end();
 });
 
 /* --------------------------------------------------
-   WhatsApp API Call (Permanent Token)
+   WhatsApp API Call (Async-safe)
 -------------------------------------------------- */
-async function sendWelcomeMessage(to) {
+function sendWelcomeMessage(to) {
   const payload = {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
@@ -77,39 +78,33 @@ async function sendWelcomeMessage(to) {
     text: {
       body:
         '👋 Welcome to Ultimate FitBuddy AI! 💪🤖\n\n' +
-        'I’m your personal AI fitness & nutrition coach.\n\n' +
-        'What is your name? 😊'
+        'I’m your personal AI fitness & nutrition coach, here to help you:\n' +
+        '- 🏋️ Build strength\n' +
+        '- 🔥 Lose fat\n' +
+        '- 🥗 Eat smarter\n' +
+        '- ⏰ Stay consistent\n\n' +
+        'I’ll create personalized workout & diet plans based on your body, goals, and lifestyle.\n\n' +
+        '✨ What you’ll get:\n' +
+        '- Customized workout plans (home or gym)\n' +
+        '- Daily diet reminders at your preferred time\n' +
+        '- Smart adjustments as you progress\n' +
+        '- Simple, practical guidance you can actually follow\n\n' +
+        '⏳ It takes less than 2 minutes to get started.\n\n' +
+        '👉 Let’s begin!\nWhat is your name? 😊'
     }
   };
 
-  try {
-    const response = await axios.post(WHATSAPP_API_URL, payload, {
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${WHATSAPP_TOKEN}`
-      }
-    });
-
-    console.log('✅ WhatsApp API response:', response.data);
-  } catch (err) {
-    console.error(
-      '❌ WhatsApp API error:',
-      err.response?.data || err.message
-    );
-  }
-}
-
-  await axios.post(WHATSAPP_API_URL, payload, {
+  return axios.post(WHATSAPP_API_URL, payload, {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${WHATSAPP_TOKEN}`
     }
   });
-
-  console.log('Welcome message sent to', to);
 }
 
-// Start the server
+/* --------------------------------------------------
+   START SERVER
+-------------------------------------------------- */
 app.listen(port, () => {
-  console.log(`\nListening on port ${port}\n`);
+  console.log(`🚀 Listening on port ${port}`);
 });
