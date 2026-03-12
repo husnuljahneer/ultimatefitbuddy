@@ -1926,6 +1926,10 @@ app.listen(PORT, async () => {
   console.log(`💳 Stripe webhook at /stripe-webhook`);
   console.log(`❤️ Health check at /health`);
   
-  // Initialize Stripe prices
-  await initializeStripePrices();
+  // Initialize Stripe prices (skip if no valid key)
+  if (process.env.STRIPE_SECRET_KEY) {
+    await initializeStripePrices();
+  } else {
+    console.log('⚠️ STRIPE_SECRET_KEY not set - skipping Stripe initialization');
+  }
 });
