@@ -18,7 +18,7 @@ const WHATSAPP_API_URL = `https://graph.facebook.com/v23.0/${PHONE_NUMBER_ID}/me
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // ================= STRIPE CONFIG =================
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_51HEybmEtfPQmF2px');
+const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 const BASE_URL = process.env.BASE_URL || 'https://your-domain.com'; // Update this
 const APP_NAME = 'Ultimate FitBuddy';
@@ -219,6 +219,11 @@ app.get('/payment-cancel', (req, res) => {
 // ================= WEBHOOK MESSAGE =================
 app.post('/', async (req, res) => {
   res.status(200).end();
+  
+  // Ignore status updates (delivered, read, etc.)
+  const statuses = req.body.entry?.[0]?.changes?.[0]?.value?.statuses;
+  if (statuses) return;
+  
   const msg = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
   if (!msg?.from) return;
   
@@ -226,6 +231,8 @@ app.post('/', async (req, res) => {
   const text = msg.text?.body?.trim() || '';
   const buttonId = msg.interactive?.button_reply?.id;
   const listId = msg.interactive?.list_reply?.id;
+  
+  console.log(`📩 Message from ${phone}: "${text || buttonId || listId}" (type: ${msg.type})`);
   
   try {
     await handleMessage(phone, text, buttonId || listId);
@@ -1843,6 +1850,7 @@ async function sendButtons(to, bodyText, buttons) {
 
 async function whatsappRequest(data) {
   try {
+    console.log(`📤 Sending ${data.type} to ${data.to}`);
     const res = await axios.post(WHATSAPP_API_URL, data, {
       headers: {
         Authorization: `Bearer ${WHATSAPP_TOKEN}`,
@@ -1850,9 +1858,10 @@ async function whatsappRequest(data) {
       },
       timeout: 30000
     });
+    console.log(`✅ Sent to ${data.to} (msg id: ${res.data?.messages?.[0]?.id || 'unknown'})`);
     return res;
   } catch (err) {
-    console.error('WhatsApp API error:', err.response?.data || err.message);
+    console.error(`❌ WhatsApp API error (to: ${data.to}):`, err.response?.data || err.message);
     throw err;
   }
 }
@@ -1925,6 +1934,13 @@ app.listen(PORT, async () => {
   console.log(`📱 Webhook ready at /`);
   console.log(`💳 Stripe webhook at /stripe-webhook`);
   console.log(`❤️ Health check at /health`);
+  
+  // Validate required env vars
+  const required = { WHATSAPP_TOKEN, VERIFY_TOKEN, GROQ_API_KEY: process.env.GROQ_API_KEY };
+  const missing = Object.entries(required).filter(([, v]) => !v).map(([k]) => k);
+  if (missing.length > 0) {
+    console.warn(`⚠️ Missing env vars: ${missing.join(', ')} — some features won't work`);
+  }
   
   // Initialize Stripe prices (skip if no valid key)
   if (process.env.STRIPE_SECRET_KEY) {
